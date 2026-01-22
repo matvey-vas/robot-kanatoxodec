@@ -1,0 +1,213 @@
+#include <Arduino.h>
+#include <WiFi.h>
+#include <driver/ledc.h>
+
+// Пины подключения
+#define MOTOR_PIN1 12
+#define MOTOR_PIN2 13
+#define ENCODER_PIN 14
+#define RELAY_PIN 15
+#define RGB_RED 16
+#define RGB_GREEN 17
+#define RGB_BLUE 18
+#define SENSOR_A 19
+#define SENSOR_B 20
+#define VIBRATION_PIN 21
+
+// Состояния робота
+enum RobotState {
+  STARTUP,
+  CHARGING,
+  READY,
+  MOVING_TO_B,
+  WAITING_AT_B,
+  MOVING_TO_A,
+  EMERGENCY_STOP,
+  BROKEN
+};
+
+RobotState currentState = STARTUP;
+bool isCharging = false;
+bool isBroken = false;
+unsigned long lastBlinkTime = 0;
+bool ledState = false;
+
+// Настройка ШИМ для RGB
+void setupRGBPWM() {
+  ledcSetup(0, 5000, 8); // Красный
+  ledcSetup(1, 5000, 8); // Зеленый
+  ledcSetup(2, 5000, 8); // Синий
+  
+  ledcAttachPin(RGB_RED, 0);
+  ledcAttachPin(RGB_GREEN, 1);
+  ledcAttachPin(RGB_BLUE, 2);
+}
+
+// Установка цвета RGB
+void setRGBColor(int red, int green, int blue) {
+  ledcWrite(0, red);
+  ledcWrite(1, green);
+  ledcWrite(2, blue);
+}
+
+// Мигание цветом
+void blinkColor(int red, int green, int blue, int interval = 500) {
+  unsigned long currentTime = millis();
+  if (currentTime - lastBlinkTime >= interval) {
+    ledState = !ledState;
+    if (ledState) {
+      setRGBColor(red, green, blue);
+    } else {
+      setRGBColor(0, 0, 0);
+    }
+    lastBlinkTime = currentTime;
+  }
+}
+
+// Аварийная остановка
+void emergencyStop() {
+  digitalWrite(MOTOR_PIN1, LOW);
+  digitalWrite(MOTOR_PIN2, LOW);
+  digitalWrite(RELAY_PIN, HIGH); // Активация реле
+  digitalWrite(VIBRATION_PIN, HIGH); // Вибрация пульта
+  
+  currentState = EMERGENCY_STOP;
+  isBroken = true;
+  
+  // Мигание красным при аварии
+  blinkColor(255, 0, 0, 200);
+}
+
+// Движение к точке B
+void moveToB() {
+  if (digitalRead(SENSOR_B) == LOW) {
+    // Достигнута точка B
+    digitalWrite(MOTOR_PIN1, LOW);
+    digitalWrite(MOTOR_PIN2, LOW);
+    currentState = WAITING_AT_B;
+    return;
+  }
+  
+  // Движение вперед
+  digitalWrite(MOTOR_PIN1, HIGH);
+  digitalWrite(MOTOR_PIN2, LOW);
+}
+
+// Движение к точке A
+void moveToA() {
+  if (digitalRead(SENSOR_A) == LOW) {
+    // Достигнута точка A
+    digitalWrite(MOTOR_PIN1, LOW);
+    digitalWrite(MOTOR_PIN2, LOW);
+    currentState = READY;
+    return;
+  }
+  
+  // Движение назад
+  digitalWrite(MOTOR_PIN1, LOW);
+  digitalWrite(MOTOR_PIN2, HIGH);
+}
+
+// Проверка состояния системы
+void checkSystemHealth() {
+  // Симуляция проверки различных датчиков
+  int motorCurrent = analogRead(32); // Чтение тока двигателя
+  int batteryVoltage = analogRead(33); // Чтение напряжения батареи
+  
+  if (motorCurrent > 2000 || batteryVoltage < 1000) {
+    emergencyStop();
+  }
+}
+
+// Обработка команд с пульта
+void handleRemoteControl() {
+  // Здесь будет код для обработки RF-433 сигналов
+  // Симуляция получения команд
+  if (digitalRead(22) == HIGH) { // Предполагаемая кнопка пульта
+    if (currentState == READY) {
+      currentState = MOVING_TO_B;
+    }
+  }
+}
+
+void setup() {
+  // Настройка пинов
+  pinMode(MOTOR_PIN1, OUTPUT);
+  pinMode(MOTOR_PIN2, OUTPUT);
+  pinMode(RELAY_PIN, OUTPUT);
+  pinMode(VIBRATION_PIN, OUTPUT);
+  pinMode(SENSOR_A, INPUT_PULLUP);
+  pinMode(SENSOR_B, INPUT_PULLUP);
+  
+  // Инициализация RGB
+  setupRGBPWM();
+  
+  // Инициализация реле (выключено)
+  digitalWrite(RELAY_PIN, LOW);
+  digitalWrite(VIBRATION_PIN, LOW);
+  
+  Serial.begin(115200);
+  
+  // Симуляция запуска и загрузки
+  currentState = STARTUP;
+  setRGBColor(0, 0, 255); // Синий при запуске
+  delay(3000); // Задержка загрузки
+  
+  currentState = READY;
+}
+
+void loop() {
+  // Проверка состояния зарядки (симуляция)
+  isCharging = digitalRead(34); // Предполагаемый пин зарядки
+  
+  // Управление RGB в зависимости от состояния
+  switch (currentState) {
+    case STARTUP:
+      setRGBColor(0, 0, 255); // Синий
+      break;
+      
+    case CHARGING:
+      blinkColor(0, 0, 255, 1000); // Мигающий синий
+      break;
+      
+    case READY:
+      setRGBColor(0, 255, 0); // Зеленый
+      break;
+      
+    case MOVING_TO_B:
+      setRGBColor(255, 255, 0); // Желтый при движении
+      moveToB();
+      break;
+      
+    case WAITING_AT_B:
+      setRGBColor(255, 165, 0); // Оранжевый при ожидании
+      // Симуляция ожидания загрузки
+      delay(5000);
+      currentState = MOVING_TO_A;
+      break;
+      
+    case MOVING_TO_A:
+      setRGBColor(255, 255, 0); // Желтый при движении
+      moveToA();
+      break;
+      
+    case EMERGENCY_STOP:
+    case BROKEN:
+      blinkColor(255, 0, 0, 200); // Быстрое мигание красным
+      digitalWrite(VIBRATION_PIN, HIGH); // Постоянная вибрация при аварии
+      break;
+  }
+  
+  // Проверка состояния системы
+  checkSystemHealth();
+  
+  // Обработка команд с пульта
+  handleRemoteControl();
+  
+  // Если идет зарядка, переключаем состояние
+  if (isCharging && currentState != EMERGENCY_STOP && currentState != BROKEN) {
+    currentState = CHARGING;
+  }
+  
+  delay(100);
+}
